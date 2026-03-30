@@ -21,7 +21,6 @@ from .pages.landing_page import LandingPage
 from .pages.registration_page import RegistrationPage
 from .pages.face_alignment_page import FaceAlignmentPage
 from .pages.interview_page import InterviewPage
-from .pages.assessment_page import AssessmentPage
 from .pages.results_page import ResultsPage
 
 
@@ -36,8 +35,7 @@ class AIHiringAssistant(QMainWindow):
     PAGE_REGISTRATION = 1
     PAGE_FACE_ALIGNMENT = 2
     PAGE_INTERVIEW = 3
-    PAGE_ASSESSMENT = 4
-    PAGE_RESULTS = 5
+    PAGE_RESULTS = 4
     
     def __init__(self):
         super().__init__()
@@ -48,8 +46,6 @@ class AIHiringAssistant(QMainWindow):
         
         # Session data storage
         self.registration_data: Dict[str, Any] = {}
-        self.assessment_responses: Dict[str, list] = {}
-        self.ocean_scores: Dict[str, float] = {}
         
         # Set up UI
         self.setup_ui()
@@ -72,7 +68,6 @@ class AIHiringAssistant(QMainWindow):
         self.registration_page = RegistrationPage()
         self.face_alignment_page = FaceAlignmentPage(self.camera_handler)
         self.interview_page = InterviewPage(self.camera_handler, self.data_manager)
-        self.assessment_page = AssessmentPage()
         self.results_page = ResultsPage()
         
         # Add pages to stack
@@ -80,8 +75,7 @@ class AIHiringAssistant(QMainWindow):
         self.stack.addWidget(self.registration_page)  # Index 1
         self.stack.addWidget(self.face_alignment_page) # Index 2
         self.stack.addWidget(self.interview_page)     # Index 3
-        self.stack.addWidget(self.assessment_page)    # Index 4
-        self.stack.addWidget(self.results_page)       # Index 5
+        self.stack.addWidget(self.results_page)       # Index 4
         
         # Start on landing page
         self.stack.setCurrentIndex(self.PAGE_LANDING)
@@ -100,11 +94,8 @@ class AIHiringAssistant(QMainWindow):
         self.face_alignment_page.back_clicked.connect(self._go_to_registration)
         
         # Interview page
-        self.interview_page.interview_complete.connect(self._go_to_assessment)
+        self.interview_page.interview_complete.connect(self._on_interview_complete)
         self.interview_page.back_clicked.connect(self._go_to_face_alignment)
-        
-        # Assessment page
-        self.assessment_page.assessment_complete.connect(self._on_assessment_complete)
         
         # Results page
         self.results_page.restart_clicked.connect(self._restart_session)
@@ -168,35 +159,19 @@ class AIHiringAssistant(QMainWindow):
     
         self.interview_page.start()
     
-    def _go_to_assessment(self):
-        """Navigate to assessment page."""
-        self.stack.setCurrentIndex(self.PAGE_ASSESSMENT)
-        self.assessment_page.start()
-    
-    def _on_assessment_complete(self, responses: dict):
-        """Handle assessment completion."""
-        self.assessment_responses = responses
-        
-        # Calculate OCEAN scores
-        self.ocean_scores = {}
-        for trait, values in responses.items():
-            if values:
-                self.ocean_scores[trait] = round(sum(values) / len(values), 2)
-            else:
-                self.ocean_scores[trait] = 0.0
-        
-        # Save assessment and summary
+    def _on_interview_complete(self):
+        """Handle interview completion."""
+        # Save basic session summary without questionnaire scores
         try:
-            self.data_manager.save_assessment(responses)
-            self.data_manager.save_summary(self.registration_data, self.ocean_scores)
+            self.data_manager.save_summary(self.registration_data, {})
         except RuntimeError as e:
             QMessageBox.warning(
                 self,
                 "Warning",
                 f"Failed to save data: {e}"
             )
-        
-        # Navigate to results
+            
+        # Navigate directly to results
         self._go_to_results()
     
     def _go_to_results(self):
@@ -210,8 +185,6 @@ class AIHiringAssistant(QMainWindow):
         # Set data on results page
         self.results_page.set_data(
             registration=self.registration_data,
-            ocean_scores=self.ocean_scores,
-            recordings=recordings,
             session_folder=session_folder
         )
         
@@ -221,15 +194,12 @@ class AIHiringAssistant(QMainWindow):
         """Restart the application for a new session."""
         # Clear in-memory data
         self.registration_data = {}
-        self.assessment_responses = {}
-        self.ocean_scores = {}
         
         # Reset data manager
         self.data_manager.reset()
         
         # Reset pages
         self.registration_page.reset()
-        self.assessment_page.reset()
         
         # Stop camera if running
         self.camera_handler.stop()

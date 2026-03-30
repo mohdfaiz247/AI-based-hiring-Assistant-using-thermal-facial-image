@@ -43,7 +43,7 @@ class CameraHandler:
         Args:
             camera_index: Index of the camera to use (default 0 for primary webcam).
         """
-        self.camera_index = 1
+        self.camera_index = 0
         self.capture: Optional[cv2.VideoCapture] = None
         self.is_running = False
         self.is_recording = False

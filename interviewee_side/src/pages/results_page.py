@@ -49,81 +49,7 @@ class SuccessBadge(QWidget):
         painter.drawLine(55, 72, 78, 48)
 
 
-class ScoreCard(QFrame):
-    """Individual OCEAN score display card."""
-    
-    COLORS = {
-        "Openness": "#a855f7",
-        "Conscientiousness": "#00d4ff",
-        "Extraversion": "#ffd700",
-        "Agreeableness": "#00ffa3",
-        "Neuroticism": "#ff6b6b"
-    }
-    
-    def __init__(self, trait: str, score: float, parent=None):
-        super().__init__(parent)
-        self.trait = trait
-        self.score = score
-        self.color = self.COLORS.get(trait, "#00d4ff")
-        self.setup_ui()
-    
-    def setup_ui(self):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                            stop:0 rgba(30, 30, 42, 0.8), 
-                                            stop:1 rgba(20, 20, 30, 0.9));
-                border: 1px solid rgba(255, 255, 255, 0.06);
-                border-radius: 16px;
-            }}
-        """)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Trait initial
-        initial = self.trait[0]
-        initial_label = QLabel(initial)
-        initial_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        initial_label.setFixedSize(48, 48)
-        initial_label.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        initial_label.setStyleSheet(f"""
-            background: {self.color};
-            color: #0a0a0f;
-            border-radius: 24px;
-        """)
-        layout.addWidget(initial_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        
-        # Score
-        score_label = QLabel(f"{self.score:.1f}")
-        score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        score_label.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
-        score_label.setStyleSheet(f"color: {self.color};")
-        layout.addWidget(score_label)
-        
-        # Trait name
-        name_label = QLabel(self.trait)
-        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_label.setStyleSheet("color: #adb5bd; font-size: 12px;")
-        layout.addWidget(name_label)
-        
-        # Score bar
-        bar_bg = QFrame()
-        bar_bg.setFixedHeight(6)
-        bar_bg.setStyleSheet("background: rgba(255, 255, 255, 0.1); border-radius: 3px;")
-        
-        bar_fill_width = int((self.score / 5.0) * 100)
-        bar_fill = QFrame(bar_bg)
-        bar_fill.setGeometry(0, 0, bar_fill_width, 6)
-        bar_fill.setStyleSheet(f"""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                                        stop:0 {self.color}, stop:1 {self.color}88);
-            border-radius: 3px;
-        """)
-        
-        layout.addWidget(bar_bg)
+
 
 
 class InfoCard(QFrame):
@@ -203,21 +129,7 @@ class ResultsPage(QWidget):
         
         content_layout.addWidget(header)
         
-        # OCEAN Scores Section
-        scores_section = QWidget()
-        scores_layout = QVBoxLayout(scores_section)
-        scores_layout.setSpacing(20)
-        
-        scores_title = QLabel("OCEAN Profile")
-        scores_title.setFont(QFont("Segoe UI", 20, QFont.Weight.DemiBold))
-        scores_title.setStyleSheet("color: #f8f9fa;")
-        scores_layout.addWidget(scores_title)
-        
-        self.scores_grid = QHBoxLayout()
-        self.scores_grid.setSpacing(16)
-        scores_layout.addLayout(self.scores_grid)
-        
-        content_layout.addWidget(scores_section)
+
         
         # Info cards row
         cards_row = QHBoxLayout()
@@ -284,20 +196,8 @@ class ResultsPage(QWidget):
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
     
-    def set_data(self, registration: dict, ocean_scores: dict, recordings: list, session_folder: str):
+    def set_data(self, registration: dict, session_folder: str):
         """Populate the results page with data."""
-        # Clear existing score cards
-        while self.scores_grid.count():
-            item = self.scores_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        
-        # Add OCEAN score cards
-        for trait in ["Openness", "Conscientiousness", "Extraversion", "Agreeableness", "Neuroticism"]:
-            score = ocean_scores.get(trait, 0.0)
-            card = ScoreCard(trait, score)
-            self.scores_grid.addWidget(card)
-        
         # Personal info
         info_text = f"""
 <b>Name:</b> {registration.get('name', 'N/A')}<br>

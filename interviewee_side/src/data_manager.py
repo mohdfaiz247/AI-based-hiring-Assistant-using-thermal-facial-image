@@ -3,6 +3,7 @@ AI Hiring Assistant - Data Manager
 Handles all local file I/O operations using pathlib for cross-platform compatibility.
 """
 
+import os
 import json
 from pathlib import Path
 from datetime import datetime
@@ -23,9 +24,14 @@ class DataManager:
             base_path: Optional base path for user_data. Defaults to ./user_data
         """
         if base_path is None:
-            # Use the shared user_data directory in interviewer_side/AIHiringAssistant
-            # Assuming CWD is the aaryan'gui directory where main.py is located
-            self.base_path = Path.cwd().parent / "interviewer_side" / "AIHiringAssistant" / "user_data"
+            # Check for Docker environment variable mapping first
+            env_path = os.getenv("USER_DATA_DIR")
+            if env_path:
+                self.base_path = Path(env_path)
+            else:
+                # Use the shared user_data directory in interviewer_side/AIHiringAssistant
+                # Assuming CWD is the aaryan'gui directory where main.py is located
+                self.base_path = Path.cwd().parent / "interviewer_side" / "AIHiringAssistant" / "user_data"
         else:
             self.base_path = Path(base_path)
         

@@ -135,11 +135,11 @@ class RegistrationPage(QWidget):
         card = GlassCard()
         card.setFixedWidth(520)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(40, 40, 40, 40)
-        card_layout.setSpacing(24)
+        card_layout.setContentsMargins(40, 35, 40, 35)
+        card_layout.setSpacing(0)
         
         # Name field
-        self.name_input = self._create_field(card_layout, "Full Name", "Enter your full name")
+        self.name_input = self._create_field(card_layout, "Full Name", "Enter your full name", is_first=True)
         
         # Email field
         self.email_input = self._create_field(card_layout, "Email Address", "you@example.com")
@@ -149,11 +149,12 @@ class RegistrationPage(QWidget):
         
         # Job Profile field
         job_profile_layout = QVBoxLayout()
-        job_profile_layout.setContentsMargins(0, 0, 0, 0)
-        job_profile_layout.setSpacing(8)
+        job_profile_layout.setContentsMargins(0, 16, 0, 0)
+        job_profile_layout.setSpacing(6)
         
         job_profile_label = QLabel("Job Profile")
-        job_profile_label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent;")
+        job_profile_label.setFixedHeight(20)
+        job_profile_label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent; padding: 0; margin: 0;")
         job_profile_layout.addWidget(job_profile_label)
         
         self.job_profile_input = QComboBox()
@@ -195,16 +196,17 @@ class RegistrationPage(QWidget):
         
         # Age and Gender row
         row_layout = QHBoxLayout()
-        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setContentsMargins(0, 16, 0, 0)
         row_layout.setSpacing(20)
         
         # Age
         age_layout = QVBoxLayout()
         age_layout.setContentsMargins(0, 0, 0, 0)
-        age_layout.setSpacing(8)
+        age_layout.setSpacing(6)
         
         age_label = QLabel("Age")
-        age_label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent;")
+        age_label.setFixedHeight(20)
+        age_label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent; padding: 0; margin: 0;")
         age_layout.addWidget(age_label)
         
         self.age_input = QSpinBox()
@@ -235,10 +237,11 @@ class RegistrationPage(QWidget):
         # Gender
         gender_layout = QVBoxLayout()
         gender_layout.setContentsMargins(0, 0, 0, 0)
-        gender_layout.setSpacing(8)
+        gender_layout.setSpacing(6)
         
         gender_label = QLabel("Gender")
-        gender_label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent;")
+        gender_label.setFixedHeight(20)
+        gender_label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent; padding: 0; margin: 0;")
         gender_layout.addWidget(gender_label)
         
         self.gender_input = QComboBox()
@@ -354,15 +357,17 @@ class RegistrationPage(QWidget):
         
         main_layout.addStretch(2)
     
-    def _create_field(self, parent_layout, label_text, placeholder):
+    def _create_field(self, parent_layout, label_text, placeholder, is_first=False):
         """Create a styled input field with label."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        top_margin = 0 if is_first else 16
+        layout.setContentsMargins(0, top_margin, 0, 0)
+        layout.setSpacing(6)
         
         # Label
         label = QLabel(label_text)
-        label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent;")
+        label.setFixedHeight(20)
+        label.setStyleSheet("color: #adb5bd; font-size: 13px; font-weight: 500; background: transparent; padding: 0; margin: 0;")
         layout.addWidget(label)
         
         # Input
