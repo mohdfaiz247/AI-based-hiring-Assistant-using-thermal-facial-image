@@ -52,11 +52,9 @@ class ProjectDatabaseManager:
     """
 
     def __init__(self):
-        # url = os.environ.get("SUPABASE_URL")
-        # key = os.environ.get("SUPABASE_KEY")
-        url="https://pykxldwtzoezgvhmuozv.supabase.co"
-        key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5a3hsZHd0em9lemd2aG11b3p2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDUyOTgxOCwiZXhwIjoyMDkwMTA1ODE4fQ.5r9R5aBhkxt4MsRrB_nj8CkyIeBYEjXH1Xn076iJHQY"
-
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
+       
         if not url or not key:
             raise EnvironmentError(
                 "SUPABASE_URL and SUPABASE_KEY must be set.\n"
