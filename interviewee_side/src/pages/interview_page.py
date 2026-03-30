@@ -7,7 +7,7 @@ Aesthetic: Neo-Corporate Futurism
 import os
 from pathlib import Path
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QGraphicsDropShadowEffect, QMessageBox, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QSize
@@ -16,7 +16,6 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
 from ..camera_handler import CameraHandler
-from ..data_manager import DataManager
 
 
 class PulsingDot(QWidget):
@@ -88,20 +87,20 @@ class VideoPlayerFrame(QFrame):
 class InterviewPage(QWidget):
     """
     Video interview interface.
-    Plays a video from 'Data' folder and records user reaction.
+    Plays a video from 'Data' folder and records user reaction via the camera.
+    Recording is started externally by app.py before calling start().
     """
-    
+
     interview_complete = pyqtSignal()
     back_clicked = pyqtSignal()
-    
-    def __init__(self, camera_handler: CameraHandler, data_manager: DataManager, parent=None):
+
+    def __init__(self, camera_handler: CameraHandler, parent=None):
         super().__init__(parent)
         self.camera_handler = camera_handler
-        self.data_manager = data_manager
-        
+
         self.is_recording = False
         self.video_path = None
-        
+
         self.setup_ui()
         self._setup_media_player()
     
@@ -310,16 +309,12 @@ class InterviewPage(QWidget):
             self.finish_button.show()
     
     def _start_recording(self):
-        """Start reaction recording."""
+        """Indicate visually that recording is active (actual recording already started by app.py)."""
         if self.is_recording:
             return
-        
-        path = self.data_manager.get_interview_path("reaction")
-        
-        if self.camera_handler.start_recording(path):
-            self.is_recording = True
-            self.recording_dot.start()
-            self.rec_label.show()
+        self.is_recording = True
+        self.recording_dot.start()
+        self.rec_label.show()
     
     def _pause_recording(self):
         """Ideally pause recording, but for now we keep recording to simplify."""

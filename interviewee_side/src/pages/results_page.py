@@ -122,7 +122,7 @@ class ResultsPage(QWidget):
         heading.setStyleSheet("color: #f8f9fa; letter-spacing: -1px;")
         header_layout.addWidget(heading)
         
-        subtitle = QLabel("Your data has been saved locally")
+        subtitle = QLabel("Your data has been saved to the cloud ✓")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet("color: #6c757d; font-size: 16px;")
         header_layout.addWidget(subtitle)
@@ -196,8 +196,8 @@ class ResultsPage(QWidget):
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
     
-    def set_data(self, registration: dict, session_folder: str):
-        """Populate the results page with data."""
+    def set_data(self, registration: dict, session_id: str):
+        """Populate the results page with registration data and session UUID."""
         # Personal info
         info_text = f"""
 <b>Name:</b> {registration.get('name', 'N/A')}<br>
@@ -207,6 +207,31 @@ class ResultsPage(QWidget):
 <b>Gender:</b> {registration.get('gender', 'N/A')}
         """
         self.info_content.setText(info_text)
+
+        # Show session ID card for the interviewer
+        if not hasattr(self, '_session_id_label'):
+            from PyQt6.QtWidgets import QLabel as _QLabel
+            self._session_id_label = _QLabel()
+            self._session_id_label.setWordWrap(True)
+            self._session_id_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._session_id_label.setStyleSheet("""
+                color: #00d4ff;
+                font-size: 12px;
+                font-family: monospace;
+                background: rgba(0, 212, 255, 0.05);
+                border: 1px solid rgba(0, 212, 255, 0.2);
+                border-radius: 8px;
+                padding: 10px;
+            """)
+            # Insert below info_card in the layout
+            parent_layout = self.info_card.parent().layout() if self.info_card.parent() else None
+            if parent_layout:
+                parent_layout.insertWidget(parent_layout.indexOf(self.info_card) + 1,
+                                           self._session_id_label)
+
+        self._session_id_label.setText(
+            f"📋 <b>Session ID</b> (share with interviewer):<br>{session_id}"
+        )
     
     def _on_restart(self):
         self.restart_clicked.emit()

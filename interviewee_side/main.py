@@ -12,8 +12,13 @@ No external services or cloud storage are used.
 import sys
 import os
 
-# Add src to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root and interviewee_side to path for imports
+_main_dir = os.path.dirname(os.path.abspath(__file__))
+_root_dir = os.path.dirname(_main_dir)
+if _root_dir not in sys.path:
+    sys.path.insert(0, _root_dir)
+if _main_dir not in sys.path:
+    sys.path.insert(0, _main_dir)
 
 from src.app import run_app
 

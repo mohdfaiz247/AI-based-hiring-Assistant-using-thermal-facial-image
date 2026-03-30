@@ -1,8 +1,9 @@
 import os
 import cv2
 import time
-import glob
+import sys
 import numpy as np
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QPushButton,
     QHBoxLayout, QVBoxLayout, QFrame, QGridLayout, QGraphicsDropShadowEffect
@@ -11,29 +12,36 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap, QColor
 from ui.theme import Theme
 
-# --- CORE LOGIC IMPORTS ---
+# Core logic imports
 from core.camera_manager import CameraManager
 from core.landmark_detector import LandmarkDetector
 from core.alignment_logic import AlignmentLogic
 from core.thermal_processor import ThermalProcessor
 from core.data_logger import DataLogger
-from core.gan_validator import GANValidator 
+from core.gan_validator import GANValidator
+
+# Supabase manager
+_ISP_ROOT = Path(__file__).resolve().parents[3]
+if str(_ISP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ISP_ROOT))
+from shared.db_manager import ProjectDatabaseManager
 
 class AlignmentPage(QWidget):
-    def __init__(self, main_window):
+    def __init__(self, main_window, db_manager: ProjectDatabaseManager):
         super().__init__()
         self.main_window = main_window
+        self.db_manager = db_manager
 
-        # ---------- CORE LOGIC INSTANCES ----------
+        # --- CORE LOGIC INSTANCES ---
         self.detector = LandmarkDetector()
         self.aligner = AlignmentLogic()
         self.processor = ThermalProcessor()
         self.logger = DataLogger()
-        self.validator = GANValidator() 
+        self.validator = GANValidator()
 
-        # ---------- STATE ----------
-        self.video_writer = None  
-        self.capture_mode = "IMAGE" 
+        # --- STATE ---
+        self.video_writer = None
+        self.capture_mode = "IMAGE"
         self.recording = False
         self.paused = False
         self.face_ready = False
@@ -41,11 +49,15 @@ class AlignmentPage(QWidget):
         self.required_stable_frames = 18
         self.frame_counter = 0
 
-        # ---------- CAMERA & TIMER ----------
+        # Temp file references (cleaned up after upload)
+        self._temp_video_path = None   # Path to downloaded video temp file
+        self._session_id = None        # Active Supabase session UUID
+
+        # --- CAMERA & TIMER ---
         self.video_source = None
-        self.is_video_file = True 
-        self.camera = None 
-        
+        self.is_video_file = True
+        self.camera = None
+
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
 
@@ -200,21 +212,64 @@ class AlignmentPage(QWidget):
         main_layout.addLayout(self.video_container, 3)
         main_layout.addLayout(panel, 1)
 
-    def set_session(self, user_data, video_path):
+    def set_session(self, user_data: dict, session_id: str):
+        """
+        Prepare the alignment page for processing a session.
+
+        Downloads the interview video from Supabase Storage to a local temp file,
+        then loads it into CameraManager.
+
+        Args:
+            user_data:  Session dict from Supabase (name, email, etc.).
+            session_id: The Supabase UUID for the session.
+        """
         self.user_data = user_data
-        self.video_source = video_path
+        self._session_id = session_id
         self.capture_mode = "VIDEO_PROCESSING"
-        
-        self.session_card.setText(f"<b style='color:{Theme.COLOR_TEXT_MAIN}; font-size:14px;'>Applicant Info</b><br><br><span style='color:{Theme.COLOR_TEXT_SEC};'>Name:</span> <span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{user_data.get('name', 'Unknown')}</span><br><span style='color:{Theme.COLOR_TEXT_SEC};'>ID:</span> <span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{user_data.get('id', 'Unknown')}</span><br><span style='color:{Theme.COLOR_TEXT_SEC};'>Email:</span> <span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{user_data.get('email', 'Unknown')}</span><br><span style='color:{Theme.COLOR_TEXT_SEC};'>Mode:</span> <span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{self.capture_mode}</span>")
-        
+
+        self.session_card.setText(
+            f"<b style='color:{Theme.COLOR_TEXT_MAIN}; font-size:14px;'>Applicant Info</b><br><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Name:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{user_data.get('name', 'Unknown')}</span><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Session ID:</span> "
+            f"<span style='color:{Theme.COLOR_PRIMARY}; font-size:10px; font-family:monospace;'>{session_id}</span><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Email:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{user_data.get('email', 'Unknown')}</span><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Mode:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{self.capture_mode}</span>"
+        )
+
+        # Release previous camera if any
         if self.camera:
             self.camera.release()
-        
-        print(f"Loading video: {self.video_source}")
+
+        # Clean up any previous temp video
+        self._cleanup_temp_video()
+
+        # Download video from Supabase to a temp file
+        try:
+            self.status_label.setText("Status: Downloading video…")
+            self._temp_video_path = self.db_manager.download_video(session_id)
+            self.video_source = str(self._temp_video_path)
+            print(f"[AlignmentPage] Video ready at: {self.video_source}")
+        except RuntimeError as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Download Error", str(e))
+            return
+
         self.camera = CameraManager(self.video_source)
-        
         self.reset_state()
         self.timer.start(30)
+
+    def _cleanup_temp_video(self):
+        """Delete the temp video file if it exists."""
+        if self._temp_video_path and self._temp_video_path.exists():
+            try:
+                self._temp_video_path.unlink()
+                print(f"[AlignmentPage] Cleaned up temp video: {self._temp_video_path}")
+            except Exception as e:
+                print(f"[AlignmentPage] Could not delete temp video: {e}")
+        self._temp_video_path = None
 
     def reset_state(self):
         self.recording = False
@@ -338,25 +393,44 @@ class AlignmentPage(QWidget):
 
     def stop_recording(self):
         self.recording = False
-        if self.video_writer: self.video_writer.release()
-        
+        if self.video_writer:
+            self.video_writer.release()
+
         self.status_label.setText("Status: Data Saved")
-        self.status_label.setStyleSheet(f"color: {Theme.COLOR_SUCCESS}; font-weight: 600; font-size: 12px; margin-bottom: 5px;")
-        
+        self.status_label.setStyleSheet(
+            f"color: {Theme.COLOR_SUCCESS}; font-weight: 600; font-size: 12px; margin-bottom: 5px;"
+        )
+
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
 
-        # Transition to ML Result Page (Assessment Data)
-        # Assuming video_source is inside the session folder
-        if self.video_source and os.path.exists(self.video_source):
-             session_path = os.path.dirname(self.video_source)
-             print(f"Processing Complete. Transitioning to Results with session: {session_path}")
-             # Pass the CSV containing extracted thermal data features
-             csv_path = self.logger.file_path
-             # Give a small delay or transition immediately
-             QTimer.singleShot(1000, lambda: self.main_window.go_to_ml_result_page(self.user_data, session_path, csv_path))
+        csv_local_path = self.logger.file_path
+
+        # Upload the DataLogger CSV to Supabase if we have an active session
+        if self._session_id:
+            try:
+                self.status_label.setText("Status: Uploading CSV…")
+                from pathlib import Path as _Path
+                self.db_manager.upload_csv(self._session_id, _Path(csv_local_path))
+                print(f"[AlignmentPage] CSV uploaded for session {self._session_id}")
+            except Exception as e:
+                print(f"[AlignmentPage] CSV upload warning: {e}")
+
+        # Transition to ML Result Page
+        # Pass session_id (UUID) — ml_result_page will fetch OCEAN scores and image from Supabase
+        if self._session_id:
+            session_id = self._session_id
+            QTimer.singleShot(
+                1000,
+                lambda: self.main_window.go_to_ml_result_page(
+                    self.user_data, session_id, csv_path=csv_local_path
+                )
+            )
         else:
-            print("Error: Could not determine session path.")
+            print("[AlignmentPage] Error: No session_id set — cannot transition.")
+
+        # Schedule temp video cleanup after transition
+        QTimer.singleShot(6000, self._cleanup_temp_video)
 
     def go_back(self):
         self.stop_recording()

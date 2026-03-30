@@ -1,47 +1,64 @@
+"""
+Session Selection Page — Supabase-backed
+Loads all sessions from Supabase instead of scanning a local directory.
+"""
+
 import os
-import json
-import glob
+import sys
+from pathlib import Path
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, 
+    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QListWidget, QListWidgetItem, QSplitter, QFrame, QGraphicsDropShadowEffect,
     QDialog, QTextBrowser, QFileDialog, QMessageBox
 )
-from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from ui.theme import Theme
 from core.career_model import CareerPersonalityModel
 
+# Add ISP root to path so shared module is importable
+_ISP_ROOT = Path(__file__).resolve().parents[3]
+if str(_ISP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ISP_ROOT))
+
+from shared.db_manager import ProjectDatabaseManager
+
+
 class SessionSelectionPage(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
-        self.selected_session_path = None
-        self.selected_video_path = None
+        self.selected_session_id = None     # Supabase UUID (the handshake key)
         self.selected_user_data = None
 
-        # --- Apply Global Theme ---
-        self.setStyleSheet(Theme.global_style() + f"""
-            QListWidget::item {{
+        try:
+            self.db_manager = ProjectDatabaseManager()
+        except EnvironmentError as e:
+            QMessageBox.critical(self, "Configuration Error", str(e))
+            self.db_manager = None
+
+        # Apply Global Theme
+        self.setStyleSheet(Theme.global_style() + """
+            QListWidget::item {
                 padding: 12px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            }}
+            }
         """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 40, 40, 40)
-        
-        # --- Title ---
+
+        # Title
         title = QLabel("Session Selection")
         title.setStyleSheet(f"""
-            font-size: 26px; 
-            font-weight: 700; 
+            font-size: 26px;
+            font-weight: 700;
             color: {Theme.COLOR_TEXT_MAIN};
             margin-bottom: 20px;
         """)
         layout.addWidget(title)
-        
-        # --- Main Content (Splitter) ---
+
+        # Main Content (Splitter)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(1)
         splitter.setStyleSheet(f"""
@@ -49,23 +66,23 @@ class SessionSelectionPage(QWidget):
                 background-color: {Theme.COLOR_BORDER};
             }}
         """)
-        
+
         # Left: Session List
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 20, 0)
         left_layout.setSpacing(10)
-        
+
         list_label = QLabel("Available Sessions")
         list_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {Theme.COLOR_TEXT_SEC};")
-        
+
         self.session_list = QListWidget()
         self.session_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.session_list.itemClicked.connect(self.on_session_selected)
-        
+
         left_layout.addWidget(list_label)
         left_layout.addWidget(self.session_list)
-        
+
         # Right: Details & Action
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
@@ -74,7 +91,7 @@ class SessionSelectionPage(QWidget):
 
         details_header = QLabel("Session Details")
         details_header.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {Theme.COLOR_TEXT_SEC};")
-        
+
         # Details Pane (Card Style)
         self.details_frame = QFrame()
         self.details_frame.setStyleSheet(f"""
@@ -82,27 +99,26 @@ class SessionSelectionPage(QWidget):
                 {Theme.card_style()}
             }}
         """)
-        
-        # Subtle shadow
+
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(30)
-        shadow.setColor(QColor(0, 212, 255, 40)) # Soft cyan glow
+        shadow.setColor(QColor(0, 212, 255, 40))
         shadow.setOffset(0, 5)
         self.details_frame.setGraphicsEffect(shadow)
 
         details_layout = QVBoxLayout(self.details_frame)
         details_layout.setContentsMargins(20, 20, 20, 20)
-        
+
         self.details_label = QLabel("Select a session to view details.")
         self.details_label.setWordWrap(True)
         self.details_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.details_label.setStyleSheet(f"""
-            font-size: 14px; 
-            color: {Theme.COLOR_TEXT_MAIN}; 
+            font-size: 14px;
+            color: {Theme.COLOR_TEXT_MAIN};
             border: none;
             background: transparent;
         """)
-        
+
         details_layout.addWidget(self.details_label)
         details_layout.addStretch()
 
@@ -120,120 +136,108 @@ class SessionSelectionPage(QWidget):
         self.process_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.process_btn.setStyleSheet(Theme.button_primary())
         self.process_btn.clicked.connect(self.process_session)
-        
+
         self.refresh_btn = QPushButton("Refresh List")
         self.refresh_btn.setFixedHeight(50)
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.setStyleSheet(Theme.button_secondary())
         self.refresh_btn.clicked.connect(self.load_sessions)
-        
+
         right_layout.addWidget(details_header)
         right_layout.addWidget(self.details_frame, 2)
         right_layout.addSpacing(10)
         right_layout.addWidget(self.report_btn)
         right_layout.addWidget(self.refresh_btn)
         right_layout.addWidget(self.process_btn)
-        
+
         splitter.addWidget(left_widget)
         splitter.addWidget(right_widget)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
-        
+
         layout.addWidget(splitter)
-        
+
         self.load_sessions()
 
     def load_sessions(self):
+        """Fetch all sessions from Supabase and populate the list."""
         self.session_list.clear()
         self.process_btn.setEnabled(False)
         self.report_btn.setEnabled(False)
         self.details_label.setText("Select a session to view details.")
-        
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        user_data_dir = os.path.join(base_dir, "user_data")
-        
-        if not os.path.exists(user_data_dir):
-            self.details_label.setText(f"User data directory not found: {user_data_dir}")
+
+        if not self.db_manager:
+            self.details_label.setText("Database not available (check .env configuration).")
             return
 
-        sessions = [f.path for f in os.scandir(user_data_dir) if f.is_dir()]
-        sessions.sort(key=lambda x: os.path.getmtime(x), reverse=True) 
-        
-        for session_path in sessions:
-            folder_name = os.path.basename(session_path)
-            display_name = folder_name
-            reg_path = os.path.join(session_path, "registration.json")
-            if os.path.exists(reg_path):
-                try:
-                    with open(reg_path, 'r') as f:
-                        data = json.load(f)
-                        user_name = data.get('name', 'Unknown')
-                        display_name = f"{user_name} ({folder_name})"
-                except:
-                    pass
-            
+        sessions = self.db_manager.list_sessions()
+        if not sessions:
+            self.details_label.setText("No sessions found in Supabase.")
+            return
+
+        for session in sessions:
+            name = session.get("name") or "Unknown"
+            created_at = (session.get("created_at") or "")[:10]  # Date only
+            display_name = f"{name}  ({created_at})"
+
             item = QListWidgetItem(display_name)
-            item.setData(Qt.ItemDataRole.UserRole, session_path)
+            # Store the full session dict as item data
+            item.setData(Qt.ItemDataRole.UserRole, session)
             self.session_list.addItem(item)
 
     def on_session_selected(self, item):
-        session_path = item.data(Qt.ItemDataRole.UserRole)
-        self.selected_session_path = session_path
-        
-        reg_path = os.path.join(session_path, "registration.json")
-        video_files = glob.glob(os.path.join(session_path, "*.mp4")) + \
-                      glob.glob(os.path.join(session_path, "*.avi"))
-        
-        # HTML formatting using Theme colors
-        details = f"<b style='font-size:15px; color:{Theme.COLOR_TEXT_MAIN};'>{os.path.basename(session_path)}</b><br><hr style='border: 1px solid {Theme.COLOR_BORDER};'><br>"
-        
-        self.selected_user_data = None
-        self.selected_video_path = None
-        
-        if os.path.exists(reg_path):
-            try:
-                with open(reg_path, 'r') as f:
-                    data = json.load(f)
-                    self.selected_user_data = data
-                    details += f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Name:</span> <span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{data.get('name', 'N/A')}</span><br>"
-                    details += f"<span style='color:{Theme.COLOR_TEXT_SEC};'>ID:</span> <span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{data.get('id', 'N/A')}</span><br>"
-                    details += f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Email:</span> <span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{data.get('email', 'N/A')}</span><br>"
-            except Exception as e:
-                details += f"<span style='color:{Theme.COLOR_DANGER};'>Error loading registration: {e}</span><br>"
-        else:
-             details += f"<span style='color:{Theme.COLOR_WARNING};'>No registration.json found.</span><br>"
-             
-        summary_path = os.path.join(session_path, "summary.json")
-        is_processed = False
-        if os.path.exists(summary_path):
-            try:
-                with open(summary_path, 'r') as f:
-                    summary_data = json.load(f)
-                if summary_data.get("ocean_scores"):
-                    is_processed = True
-            except: pass
+        session = item.data(Qt.ItemDataRole.UserRole)
+        self.selected_session_id = session.get("id")
+        self.selected_user_data = session
 
-        if video_files:
-            video_file = video_files[0]
-            self.selected_video_path = video_file
-            details += f"<br><span style='color:{Theme.COLOR_TEXT_SEC};'>Video Source:</span> <span style='color:{Theme.COLOR_TEXT_MAIN};'>{os.path.basename(video_file)}</span><br>"
-            if is_processed:
-                details += f"<br><span style='color:{Theme.COLOR_SUCCESS}; font-weight:bold;'>✓ Processing Complete</span>"
-            else:
-                details += f"<br><span style='color:{Theme.COLOR_SUCCESS}; font-weight:bold;'>✓ Ready for processing</span>"
+        name = session.get("name") or "N/A"
+        email = session.get("email") or "N/A"
+        mobile = session.get("mobile") or "N/A"
+        age = session.get("age") or "N/A"
+        job = session.get("job_profile") or "N/A"
+        created = (session.get("created_at") or "")[:19].replace("T", " ")
+
+        has_video = bool(session.get("interview_video"))
+        is_processed = bool(session.get("ocean_score"))
+        has_report = bool(session.get("report_pdf_url"))
+
+        details = (
+            f"<b style='font-size:15px; color:{Theme.COLOR_TEXT_MAIN};'>{name}</b>"
+            f"<hr style='border: 1px solid {Theme.COLOR_BORDER};'><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Email:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{email}</span><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Mobile:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{mobile}</span><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Age:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{age}</span><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Job Profile:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{job}</span><br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Created:</span> "
+            f"<span style='color:{Theme.COLOR_TEXT_MAIN}; font-weight:600;'>{created}</span><br>"
+            f"<br>"
+            f"<span style='color:{Theme.COLOR_TEXT_SEC};'>Session ID:</span> "
+            f"<span style='font-family:monospace; color:{Theme.COLOR_PRIMARY}; font-size:11px;'>"
+            f"{self.selected_session_id}</span><br>"
+        )
+
+        if has_video:
+            status_color = Theme.COLOR_SUCCESS if not is_processed else Theme.COLOR_SUCCESS
+            status_text = "✓ Processing Complete" if is_processed else "✓ Video ready for processing"
+            details += f"<br><span style='color:{status_color}; font-weight:bold;'>{status_text}</span>"
         else:
-            details += f"<br><span style='color:{Theme.COLOR_DANGER}; font-weight:bold;'>⚠ No video source found</span>"
-            
+            details += f"<br><span style='color:{Theme.COLOR_DANGER}; font-weight:bold;'>⚠ No video uploaded yet</span>"
+
         self.details_label.setText(details)
-        
-        if self.selected_video_path and self.selected_user_data and not is_processed:
+
+        # Enable buttons based on state
+        if has_video and not is_processed:
             self.process_btn.setVisible(True)
             self.process_btn.setEnabled(True)
         else:
             self.process_btn.setVisible(False)
             self.process_btn.setEnabled(False)
-            
-        if is_processed:
+
+        if is_processed or has_report:
             self.report_btn.setVisible(True)
             self.report_btn.setEnabled(True)
         else:
@@ -241,24 +245,27 @@ class SessionSelectionPage(QWidget):
             self.report_btn.setEnabled(False)
 
     def process_session(self):
-        if self.selected_user_data and self.selected_video_path:
+        """Start processing the selected session — pass session_id (UUID) to alignment page."""
+        if self.selected_user_data and self.selected_session_id:
             self.main_window.go_to_alignment_page(
-                self.selected_user_data, 
-                self.selected_video_path
+                self.selected_user_data,
+                self.selected_session_id,
             )
 
     def show_report_dialog(self):
-        if not self.selected_session_path or not self.selected_user_data:
+        """Open the report PDF URL from Supabase in the default browser."""
+        if not self.selected_user_data:
             return
-            
-        safe_name = self.selected_user_data.get('name', 'Candidate').replace(' ', '_')
-        if not safe_name: safe_name = "Candidate"
-        pdf_path = os.path.join(self.selected_session_path, f"{safe_name}_Report.pdf")
-        
-        if os.path.exists(pdf_path):
+
+        report_url = self.selected_user_data.get("report_pdf_url")
+        if report_url:
+            import webbrowser
             try:
-                os.startfile(os.path.abspath(pdf_path))
+                webbrowser.open(report_url)
             except Exception as e:
-                QMessageBox.warning(self, "Error", f"Could not open PDF: {e}")
+                QMessageBox.warning(self, "Error", f"Could not open report URL:\n{e}")
         else:
-            QMessageBox.information(self, "Not Found", "PDF Report not found for this session. It may not be fully processed yet.")
+            QMessageBox.information(
+                self, "Not Found",
+                "PDF Report not found for this session. It may not be fully processed yet."
+            )

@@ -1,7 +1,10 @@
 import os
+import sys
 import json
+import io
+from pathlib import Path
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, 
+    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QProgressBar, QFrame, QGraphicsDropShadowEffect, QGridLayout, QScrollArea
 )
 from PyQt6.QtCore import Qt
@@ -10,12 +13,20 @@ from PyQt6.QtGui import QColor
 from ui.theme import Theme
 from ml.predict import predict
 
+# Supabase manager
+_ISP_ROOT = Path(__file__).resolve().parents[3]
+if str(_ISP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ISP_ROOT))
+from shared.db_manager import ProjectDatabaseManager
+
 class MlResultPage(QWidget):
-    def __init__(self, main_window):
+    def __init__(self, main_window, db_manager: ProjectDatabaseManager):
         super().__init__()
         self.main_window = main_window
-        self.session_path = None
+        self.db_manager = db_manager
+        self.session_id = None
         self.user_data = None
+        self._pdf_url = None    # Supabase URL after upload
 
         # --- Apply Global Theme ---
         self.setStyleSheet(Theme.global_style())
@@ -100,79 +111,60 @@ class MlResultPage(QWidget):
         scroll.setWidget(content_widget)
         main_layout.addWidget(scroll)
 
-    def process_session(self, user_data, session_path, csv_path=None):
+    def process_session(self, user_data, session_id: str, csv_path=None):
+        """
+        Load predictions for a session identified by its Supabase UUID.
+
+        If ocean_score is already set in Supabase, use that cached value.
+        Otherwise run predict() on the CSV and persist the result back.
+        """
         self.user_data = user_data
-        self.session_path = session_path
+        self.session_id = session_id
         self.csv_path = csv_path
-        
+        self._pdf_url = None
+
         # Reset UI
         self.title.setText(f"Analysis for {user_data.get('name', 'Candidate')}")
         self.loading_label.setVisible(True)
         self.loading_label.setText("Generating AI Profile...")
-        
+
         # Clear previous results from layout
-        while self.results_layout.count() > 1: # Keep loading label
+        while self.results_layout.count() > 1:
             item = self.results_layout.takeAt(1)
             if item.widget():
                 item.widget().deleteLater()
 
-        # Check existing summary.json for cached predictions
-        summary_path = os.path.join(self.session_path, "summary.json")
-        predictions = None
         trait_order = ["Openness", "Conscientiousness", "Extraversion", "Agreeableness", "Neuroticism"]
+        predictions = None
 
-        if os.path.exists(summary_path):
-            try:
-                with open(summary_path, 'r') as f:
-                    summary_data = json.load(f)
-                cached_scores = summary_data.get("ocean_scores", {})
-                if cached_scores and all(t in cached_scores for t in trait_order):
-                    # Cache hit
-                    predictions = [
-                        cached_scores["Openness"],
-                        cached_scores["Conscientiousness"],
-                        cached_scores["Extraversion"],
-                        cached_scores["Agreeableness"],
-                        cached_scores["Neuroticism"]
-                    ]
-                    print("Using cached predictions from summary.json")
-            except Exception as e:
-                print(f"Error reading summary cache: {e}")
+        # --- 1. Try to load cached scores from Supabase ---
+        try:
+            session_row = self.db_manager.get_session(session_id)
+            cached = session_row.get("ocean_score") if session_row else None
+            if cached and all(t in cached for t in trait_order):
+                predictions = [cached[t] for t in trait_order]
+                print("[MlResultPage] Using cached OCEAN scores from Supabase.")
+        except Exception as e:
+            print(f"[MlResultPage] Error reading cached scores: {e}")
 
-        # If no cache or cache empty, run prediction
+        # --- 2. Run prediction if no cache ---
         if predictions is None:
             if self.csv_path and os.path.exists(self.csv_path):
                 try:
                     predictions = predict(self.csv_path)
-                    # Cache it back to summary.json
-                    if os.path.exists(summary_path):
-                        try:
-                            with open(summary_path, 'r') as f:
-                                summary_data = json.load(f)
-                            
-                            summary_data["ocean_scores"] = {
-                                "Openness": predictions[0],
-                                "Conscientiousness": predictions[1],
-                                "Extraversion": predictions[2],
-                                "Agreeableness": predictions[3],
-                                "Neuroticism": predictions[4]
-                            }
-                            with open(summary_path, 'w') as f:
-                                json.dump(summary_data, f, indent=2)
-                        except Exception as e:
-                            print(f"Error caching to summary.json: {e}")
+                    # Persist scores back to Supabase
+                    scores_dict = dict(zip(trait_order, [float(p) for p in predictions]))
+                    self.db_manager.update_ocean_score(session_id, scores_dict)
                 except Exception as e:
-                    print(f"Error running model prediction: {e}")
+                    print(f"[MlResultPage] Error running prediction: {e}")
             else:
-                print("Warning: Missing or invalid CSV path for predictions.")
+                print("[MlResultPage] Warning: Missing or invalid CSV path for predictions.")
 
         if predictions is None:
-             self.display_error("Failed to generate AI predictions.")
-             return
-             
+            self.display_error("Failed to generate AI predictions.")
+            return
+
         self.display_predictions(predictions)
-        
-        # Auto-generate and save report silently
         self.auto_generate_report(predictions)
 
     def display_error(self, message):
@@ -229,49 +221,46 @@ class MlResultPage(QWidget):
         self.main_window.go_to_session_selection_page()
 
     def auto_generate_report(self, predictions):
+        """Generate an HTML/PDF report and upload the PDF to Supabase Storage."""
         ocean_scores = {
-            'O': predictions[0],
-            'C': predictions[1],
-            'E': predictions[2],
-            'A': predictions[3],
-            'N': predictions[4]
+            'O': predictions[0], 'C': predictions[1],
+            'E': predictions[2], 'A': predictions[3], 'N': predictions[4]
         }
-        
+
+        # ---- Profile image: load from Supabase URL ----
         import base64
+        import urllib.request
         image_html = ""
-        img_path = os.path.join(self.session_path, "aligned_face.jpg")
-        if os.path.exists(img_path):
+        img_url = (self.user_data or {}).get("user_image_url") or ""
+        if img_url:
             try:
-                with open(img_path, "rb") as image_file:
-                    encoded_string = base64.b64encode(image_file.read()).decode()
+                with urllib.request.urlopen(img_url, timeout=5) as resp:
+                    encoded_string = base64.b64encode(resp.read()).decode()
                 img_uri = f"data:image/jpeg;base64,{encoded_string}"
                 image_html = f"<img src='{img_uri}' width='150' alt='Candidate'>"
             except Exception as e:
-                print(f"Error base64 encoding image: {e}")
-                image_html = f"<div style='color:#bdc3c7; padding:50px 0;'>Image Error</div>"
+                print(f"[MlResultPage] Could not load profile image: {e}")
+                image_html = f"<div style='color:#bdc3c7; padding:50px 0;'>Image Unavailable</div>"
         else:
             image_html = f"<div style='color:#bdc3c7; padding:50px 0;'>No Image</div>"
-            
+
         try:
             from core.career_model import CareerPersonalityModel
             model = CareerPersonalityModel()
             top_3 = model.get_top_3_profiles(ocean_scores)
-            
             job_profile = self.user_data.get('job_profile', '')
-            if job_profile:
-                suitability = model.get_job_suitability_percentage(ocean_scores, job_profile)
-            else:
-                suitability = "N/A"
-        except Exception as e:
+            suitability = model.get_job_suitability_percentage(ocean_scores, job_profile) if job_profile else "N/A"
+        except Exception:
             top_3 = ["Software Engineer", "Data Scientist", "Product Manager"]
             suitability = "75%"
-            
-        top_3_html = "<ul>" + "".join([f"<li>{prof}</li>" for prof in top_3]) + "</ul>"
-        
-        name = self.user_data.get('name', 'N/A')
-        email = self.user_data.get('email', 'N/A')
-        age = self.user_data.get('age', 'N/A')
-        job = self.user_data.get('job_profile', 'Not Specified')
+
+        top_3_html = "<ul>" + "".join([f"<li>{p}</li>" for p in top_3]) + "</ul>"
+
+        name  = (self.user_data or {}).get('name', 'N/A')
+        email = (self.user_data or {}).get('email', 'N/A')
+        age   = (self.user_data or {}).get('age', 'N/A')
+        job   = (self.user_data or {}).get('job_profile', 'Not Specified')
+        session_label = self.session_id or "N/A"
         
         html_str = f"""
         <html>
@@ -388,7 +377,7 @@ class MlResultPage(QWidget):
             </div>
             
             <div style="text-align: center; margin-top: 40px; color: #bdc3c7; font-size: 12px;">
-                Generated by AI Hiring Assistant • Date: {os.path.basename(self.session_path)}
+                Generated by AI Hiring Assistant • Session: {session_label}
             </div>
         </body>
         </html>
@@ -396,42 +385,59 @@ class MlResultPage(QWidget):
         try:
             from PyQt6.QtGui import QTextDocument
             from PyQt6.QtPrintSupport import QPrinter
-            import stat
+            import tempfile
 
-            safe_name = name.replace(' ', '_')
-            if not safe_name: safe_name = "Candidate"
-            
-            # Save HTML
-            html_path = os.path.join(self.session_path, f"{safe_name}_Report.html")
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(html_str)
-            
-            # Save PDF silently
-            try:
-                os.chmod(self.session_path, stat.S_IWRITE)
-            except: pass
-            
-            pdf_path = os.path.join(self.session_path, f"{safe_name}_Report.pdf")
-            
+            safe_name = name.replace(' ', '_') or "Candidate"
+
+            # Render PDF to a temp file
+            tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf",
+                                                  prefix=f"isp_report_{safe_name}_")
+            tmp_pdf.close()
+            pdf_path = tmp_pdf.name
+
             doc = QTextDocument()
             doc.setHtml(html_str)
-            
+
             printer = QPrinter(QPrinter.PrinterMode.ScreenResolution)
             printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
             printer.setOutputFileName(pdf_path)
-            
+
             doc.print(printer)
-            print(f"Report automatically saved to: {pdf_path}")
-            
-            # Disconnect previous handlers to prevent duplicate dialogs/events
+            print(f"[MlResultPage] PDF rendered to temp: {pdf_path}")
+
+            # Upload PDF bytes to Supabase and get public URL
+            pdf_url = None
+            if self.session_id:
+                try:
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+                    pdf_url = self.db_manager.upload_report_pdf(self.session_id, pdf_bytes)
+                    self._pdf_url = pdf_url
+                    print(f"[MlResultPage] PDF uploaded → {pdf_url}")
+                except Exception as upload_err:
+                    print(f"[MlResultPage] PDF upload error: {upload_err}")
+
+            # Clean up temp file
+            try:
+                import os as _os
+                _os.unlink(pdf_path)
+            except Exception:
+                pass
+
+            # Disconnect previous export button handlers
             try:
                 self.export_btn.clicked.disconnect()
             except TypeError:
-                pass # Already disconnected or no signals connected
+                pass
 
-            # Wire button to open the PDF directly
-            self.export_btn.clicked.connect(lambda _, p=pdf_path: os.startfile(os.path.abspath(p)))
-            self.export_btn.setText("Open PDF Report")
-            
+            # Wire export button to open the Supabase URL in browser
+            if pdf_url:
+                import webbrowser
+                self.export_btn.clicked.connect(lambda _, u=pdf_url: webbrowser.open(u))
+                self.export_btn.setText("Open PDF Report")
+            else:
+                self.export_btn.setEnabled(False)
+                self.export_btn.setText("PDF Upload Failed")
+
         except Exception as e:
-            print(f"Error auto-generating document report: {e}")
+            print(f"[MlResultPage] Error auto-generating document report: {e}")
