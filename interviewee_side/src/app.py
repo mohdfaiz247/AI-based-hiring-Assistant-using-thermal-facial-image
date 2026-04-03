@@ -113,6 +113,7 @@ class AIHiringAssistant(QMainWindow):
 
         self.interview_page.interview_complete.connect(self._on_interview_complete)
         self.interview_page.back_clicked.connect(self._go_to_face_alignment)
+        self.interview_page.start_recording_requested.connect(self._start_interview_recording)
 
         self.results_page.restart_clicked.connect(self._restart_session)
 
@@ -171,9 +172,12 @@ class AIHiringAssistant(QMainWindow):
 
         self.stack.setCurrentIndex(self.PAGE_INTERVIEW)
 
-        # Start recording to temp path
-        self.camera_handler.start_recording(self._interview_video_path)
         self.interview_page.start()
+        
+    def _start_interview_recording(self):
+        """Start recording the webcam."""
+        if self._interview_video_path:
+            self.camera_handler.start_recording(self._interview_video_path)
 
     def _on_interview_complete(self):
         """Stop recording, upload video to Supabase, navigate to results."""

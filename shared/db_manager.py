@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# Load .env from the ISP root (works regardless of which service runs this)
+
 _env_path = ".env"
 load_dotenv(dotenv_path=_env_path, override=False)
 

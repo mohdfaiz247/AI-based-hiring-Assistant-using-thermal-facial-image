@@ -5,17 +5,69 @@ Aesthetic: Neo-Corporate Futurism
 """
 
 import os
+import cv2
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QGraphicsDropShadowEffect, QMessageBox, QSizePolicy
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QSize
-from PyQt6.QtGui import QFont, QColor, QPainter, QLinearGradient
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QThread
+from PyQt6.QtGui import QFont, QColor, QPainter, QLinearGradient, QImage, QPixmap
 
 from ..camera_handler import CameraHandler
+
+class OpenCVVideoPlayer(QThread):
+    frame_ready = pyqtSignal(QImage)
+    status_changed = pyqtSignal(str) # For EndOfMedia
+    
+    def __init__(self, video_path, parent=None):
+        super().__init__(parent)
+        self.video_path = video_path
+        self._is_running = False
+        self._is_paused = False
+        self.capture = None
+        
+    def run(self):
+        self.capture = cv2.VideoCapture(str(self.video_path))
+        if not self.capture.isOpened():
+            return
+            
+        fps = self.capture.get(cv2.CAP_PROP_FPS)
+        if fps <= 0: fps = 30
+        delay = int(1000 / fps)
+        
+        self._is_running = True
+        while self._is_running:
+            if self._is_paused:
+                self.msleep(100)
+                continue
+                
+            ret, frame = self.capture.read()
+            if not ret:
+                self.status_changed.emit("EndOfMedia")
+                break
+                
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888).copy()
+            self.frame_ready.emit(qt_image)
+            
+            self.msleep(delay)
+            
+        if self.capture:
+            self.capture.release()
+            
+    def pause(self):
+        self._is_paused = True
+        
+    def resume(self):
+        self._is_paused = False
+        
+    def stop(self):
+        self._is_running = False
+        self.wait()
+
 
 
 class PulsingDot(QWidget):
@@ -91,6 +143,7 @@ class InterviewPage(QWidget):
     Recording is started externally by app.py before calling start().
     """
 
+    start_recording_requested = pyqtSignal()
     interview_complete = pyqtSignal()
     back_clicked = pyqtSignal()
 
@@ -100,9 +153,9 @@ class InterviewPage(QWidget):
 
         self.is_recording = False
         self.video_path = None
+        self.video_thread = None
 
         self.setup_ui()
-        self._setup_media_player()
     
     def setup_ui(self):
         """Set up the interview page UI."""
@@ -148,9 +201,11 @@ class InterviewPage(QWidget):
         video_layout = QVBoxLayout(self.video_frame)
         video_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.video_widget = QVideoWidget()
-        self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        video_layout.addWidget(self.video_widget)
+        self.video_label = QLabel()
+        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_label.setStyleSheet("background-color: black; border-radius: 12px;")
+        self.video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        video_layout.addWidget(self.video_label)
 
         player_container.addWidget(self.video_frame)
         main_layout.addLayout(player_container)
@@ -261,26 +316,15 @@ class InterviewPage(QWidget):
         container_height = min(target_height, 620)
 
         self.video_frame.setFixedSize(container_width, container_height)
-        self.video_widget.setFixedSize(container_width, container_height)
+        self.video_label.setFixedSize(container_width, container_height)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_video_size()
 
-    def _setup_media_player(self):
-        """Initialize media player."""
-        self.media_player = QMediaPlayer()
-        self.audio_output = QAudioOutput()
-        self.media_player.setAudioOutput(self.audio_output)
-        self.media_player.setVideoOutput(self.video_widget)
-        self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
-    
     def start(self):
-        """Initialize and prepare video."""
-        # Look for video in Data folder
-        # TO (More robust):
+        """Prepare the video path without starting playback."""
         data_dir = Path(__file__).resolve().parents[2] / "Data"
-        # Try finding any mp4 file
         video_files = list(data_dir.glob("*.mp4"))
         
         if not video_files:
@@ -290,18 +334,32 @@ class InterviewPage(QWidget):
             return
 
         self.video_path = video_files[0]
-        self.media_player.setSource(QUrl.fromLocalFile(str(self.video_path.absolute())))
-        self.status_label.setText(f"Loaded: {self.video_path.name}")
+        self.status_label.setText(f"Ready: {self.video_path.name}")
         self.play_button.setEnabled(True)
     
+    def _update_video_frame(self, image: QImage):
+        """Slot to receive QImage from OpenCV thread."""
+        pixmap = QPixmap.fromImage(image)
+        scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        self.video_label.setPixmap(scaled_pixmap)
+        
     def _toggle_playback(self):
         """Toggle play/pause."""
-        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.media_player.pause()
+        if self.video_thread is not None and self.video_thread._is_running and not self.video_thread._is_paused:
+            self.video_thread.pause()
             self.play_button.setText("▶ Resume Video")
             self._pause_recording()
         else:
-            self.media_player.play()
+            if self.video_thread is None:
+                # First time starting
+                self.video_thread = OpenCVVideoPlayer(self.video_path)
+                self.video_thread.frame_ready.connect(self._update_video_frame)
+                self.video_thread.status_changed.connect(self._on_media_status_changed)
+                self.video_thread.start()
+                self.start_recording_requested.emit()
+            else:
+                self.video_thread.resume()
+                
             self.play_button.setText("⏸ Pause Video")
             self._start_recording()
             
@@ -334,22 +392,29 @@ class InterviewPage(QWidget):
             self.rec_label.hide()
             self.recording_dot.hide()
     
-    def _on_media_status_changed(self, status):
+    def _on_media_status_changed(self, status: str):
         """Handle media status changes."""
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+        if status == "EndOfMedia":
             self.play_button.setText("↺ Replay Video")
             self.status_label.setText("Video ended. You can finish or replay.")
+            if self.video_thread:
+                self.video_thread.stop()
+                self.video_thread = None
     
     def _on_finish(self):
         """Handle finish button."""
-        self.media_player.stop()
+        if self.video_thread:
+            self.video_thread.stop()
+            self.video_thread = None
         self._stop_recording()
         self.camera_handler.stop()
         self.interview_complete.emit()
     
     def stop(self):
         """Stop everything when leaving page."""
-        self.media_player.stop()
+        if self.video_thread:
+            self.video_thread.stop()
+            self.video_thread = None
         self._stop_recording()
     
     def paintEvent(self, event):
