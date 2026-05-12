@@ -1,4 +1,4 @@
-# 🤖 AI-Based Hiring Assistant (Thermal Facial Imaging)
+# AI-Based Hiring Assistant (Thermal Facial Imaging)
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue?style=for-the-badge&logo=python)
 ![PyQt6](https://img.shields.io/badge/PyQt6-GUI-green?style=for-the-badge&logo=qt)
@@ -8,7 +8,7 @@
 
 A cutting-edge desktop application system built with PyQt6 that modernizes the recruitment process. This tool uses **Computer Vision**, **Machine Learning**, and **Thermal Facial Analysis** to evaluate candidates remotely and assist interviewers in making data-driven decisions.
 
-## ✨ Key Features
+## Key Features
 
 - **Dual-Application Architecture**: Separate, secure interfaces for both Candidates (`interviewee_side`) and Recruiters (`interviewer_side`).
 - **Real-Time Face Alignment & Tracking**: Uses MediaPipe and OpenCV to ensure candidates are properly positioned.
@@ -17,7 +17,7 @@ A cutting-edge desktop application system built with PyQt6 that modernizes the r
 - **Automated PDF Reports**: Generates comprehensive, exportable evaluation reports for interviewers.
 - **Stunning Glassmorphism UI**: A premium, modern, and highly responsive user interface.
 
-## 🏗️ Project Architecture
+## Project Architecture
 
 ```text
 ├── interviewee_side/   # Candidate application (Registration, Camera, Recording)
@@ -28,7 +28,7 @@ A cutting-edge desktop application system built with PyQt6 that modernizes the r
 └── .env.template       # Environment variables template
 ```
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Prerequisites
 - Python 3.9 or higher
