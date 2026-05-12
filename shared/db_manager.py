@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 
 
-_env_path = ".env"
+_env_path = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(dotenv_path=_env_path, override=False)
 
 TABLE_NAME = "sessions"
@@ -84,6 +84,7 @@ class ProjectDatabaseManager:
             "name":        data.get("name"),
             "mobile":      data.get("phone") or data.get("mobile"),
             "age":         data.get("age"),
+            "gender":      data.get("gender"),
             "email":       data.get("email"),
             "job_profile": data.get("job_profile"),
         }
